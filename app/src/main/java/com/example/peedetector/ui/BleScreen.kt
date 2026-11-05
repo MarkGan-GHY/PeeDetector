@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -33,6 +34,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -45,7 +47,9 @@ import com.example.peedetector.ble.AlarmDialogState
 import com.example.peedetector.ble.AlarmRule
 import com.example.peedetector.ble.BleUiState
 import com.example.peedetector.ble.ConnectionState
+import com.example.peedetector.ble.ExportDialogState
 import com.example.peedetector.ble.ScannedDevice
+import com.example.peedetector.export.CsvExporter
 import java.text.DateFormat
 import java.util.Date
 
@@ -56,6 +60,12 @@ fun BleScreen(
     onStopScan: () -> Unit,
     onDeviceClick: (String) -> Unit,
     onDismissAlarm: () -> Unit,
+    onStartRecording: () -> Unit,
+    onStopRecording: () -> Unit,
+    onChartWindowChange: (Long) -> Unit,
+    onDismissExport: () -> Unit,
+    onSaveCsv: (String) -> Unit,
+    onShareCsv: (String) -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(TAB_MONITOR) }
     Scaffold(
@@ -86,7 +96,13 @@ fun BleScreen(
             StatusSection(state)
             Spacer(Modifier.height(12.dp))
             if (selectedTab == TAB_MONITOR) {
-                MonitorContent(state, Modifier.weight(1f))
+                MonitorContent(
+                    state = state,
+                    onStartRecording = onStartRecording,
+                    onStopRecording = onStopRecording,
+                    onChartWindowChange = onChartWindowChange,
+                    modifier = Modifier.weight(1f),
+                )
             } else {
                 DebugContent(
                     state = state,
@@ -102,20 +118,93 @@ fun BleScreen(
     state.alarmDialog?.let { alarm ->
         AlarmDialog(alarm, onDismissAlarm)
     }
+    state.exportDialog?.let { export ->
+        ExportDialog(export, onSaveCsv, onShareCsv, onDismissExport)
+    }
 }
 
 @Composable
-private fun MonitorContent(state: BleUiState, modifier: Modifier = Modifier) {
+private fun MonitorContent(
+    state: BleUiState,
+    onStartRecording: () -> Unit,
+    onStopRecording: () -> Unit,
+    onChartWindowChange: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Column(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState()),
     ) {
+        RecordingControl(state.isRecording, onStartRecording, onStopRecording)
+        Spacer(Modifier.height(12.dp))
         AlarmSettingsSection(state.selectedAlarmRule)
         Spacer(Modifier.height(12.dp))
-        CapacitanceChart(state.capacitanceSamples, state.selectedAlarmRule)
+        CapacitanceChart(
+            samples = state.capacitanceSamples,
+            alarmRule = state.selectedAlarmRule,
+            windowMillis = state.chartWindowMillis,
+            onWindowChange = onChartWindowChange,
+        )
     }
 }
+
+@Composable
+private fun RecordingControl(isRecording: Boolean, onStart: () -> Unit, onStop: () -> Unit) {
+    Button(
+        onClick = { if (isRecording) onStop() else onStart() },
+        colors = if (isRecording) {
+            ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828))
+        } else {
+            ButtonDefaults.buttonColors()
+        },
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(if (isRecording) "停止录制" else "开始录制")
+    }
+}
+
+@Composable
+private fun ExportDialog(
+    export: ExportDialogState,
+    onSave: (String) -> Unit,
+    onShare: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val csv = remember(export) { CsvExporter.samplesToWideCsv(export.samples) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("录制完成") },
+        text = {
+            Column {
+                Text("共录制 ${export.samples.size} 条样本")
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "起始：${formatDateTime(export.startedAtMillis)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray,
+                )
+                Text(
+                    "结束：${formatDateTime(export.endedAtMillis)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray,
+                )
+            }
+        },
+        confirmButton = {
+            Row {
+                TextButton(onClick = { onSave(csv) }) { Text("保存到本地") }
+                TextButton(onClick = { onShare(csv) }) { Text("转发分享") }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        },
+    )
+}
+
+private fun formatDateTime(millis: Long): String =
+    DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.MEDIUM).format(Date(millis))
 
 @Composable
 private fun DebugContent(

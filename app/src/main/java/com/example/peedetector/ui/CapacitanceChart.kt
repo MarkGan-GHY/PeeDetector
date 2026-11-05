@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -29,9 +30,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.dp
 import com.example.peedetector.ble.AlarmRule
 import com.example.peedetector.ble.CapacitanceSample
-import com.example.peedetector.ble.SIXTY_SECONDS_MILLIS
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.roundToLong
 
 private val ChannelColors = listOf(
     Color(0xFF1565C0),
@@ -44,11 +45,15 @@ private val ChannelColors = listOf(
 fun CapacitanceChart(
     samples: List<CapacitanceSample>,
     alarmRule: AlarmRule,
+    windowMillis: Long,
+    onWindowChange: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Card(modifier = modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
             Text("四通道电容曲线", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            WindowSlider(windowMillis, onWindowChange)
             Spacer(Modifier.height(4.dp))
 
             if (samples.isEmpty()) {
@@ -68,7 +73,7 @@ fun CapacitanceChart(
             }
 
             val latestTimestamp = samples.maxOf { it.receivedAtMillis }
-            val windowStart = latestTimestamp - SIXTY_SECONDS_MILLIS
+            val windowStart = latestTimestamp - windowMillis
             val visibleSamples = samples.filter { it.receivedAtMillis >= windowStart }
             val range = calculateYRange(visibleSamples)
 
@@ -77,7 +82,7 @@ fun CapacitanceChart(
                 style = MaterialTheme.typography.labelMedium,
             )
             Text(
-                "四条横轴同步显示最近 60 秒",
+                "四条横轴同步显示最近 ${formatWindowLabel(windowMillis)}",
                 style = MaterialTheme.typography.labelSmall,
                 color = Color.Gray,
             )
@@ -90,6 +95,7 @@ fun CapacitanceChart(
                         samples = visibleSamples.filter { it.channel == channel },
                         windowStartMillis = windowStart,
                         windowEndMillis = latestTimestamp,
+                        windowMillis = windowMillis,
                         yStart = range.start,
                         yEnd = range.endInclusive,
                         alarmRule = alarmRule,
@@ -107,6 +113,7 @@ private fun ChannelTrack(
     samples: List<CapacitanceSample>,
     windowStartMillis: Long,
     windowEndMillis: Long,
+    windowMillis: Long,
     yStart: Float,
     yEnd: Float,
     alarmRule: AlarmRule,
@@ -224,10 +231,46 @@ private fun ChannelTrack(
         }
 
         Row(Modifier.fillMaxWidth()) {
-            Text("−60 秒", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+            Text("−${formatWindowLabel(windowMillis)}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
             Spacer(Modifier.weight(1f))
             Text("现在", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
         }
+    }
+}
+
+@Composable
+private fun WindowSlider(windowMillis: Long, onWindowChange: (Long) -> Unit) {
+    val windowSeconds = (windowMillis / 1000L).coerceIn(60L, 600L).toFloat()
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("横轴宽度", style = MaterialTheme.typography.labelMedium)
+        Spacer(Modifier.width(8.dp))
+        Slider(
+            value = windowSeconds,
+            onValueChange = { seconds ->
+                val stepMillis = 30_000L
+                val snapped = ((seconds * 1000L).roundToLong() / stepMillis) * stepMillis
+                onWindowChange(snapped)
+            },
+            valueRange = 60f..600f,
+            steps = 17,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(formatWindowLabel(windowMillis), style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+private fun formatWindowLabel(millis: Long): String {
+    val totalSeconds = millis / 1000L
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return when {
+        seconds == 0L -> "${minutes} 分钟"
+        minutes == 0L -> "${seconds} 秒"
+        else -> "${minutes} 分 ${seconds} 秒"
     }
 }
 

@@ -36,6 +36,9 @@ data class BleUiState(
     val capacitanceSamples: List<CapacitanceSample> = emptyList(),
     val selectedAlarmRule: AlarmRule = AlarmRule.DEFAULT_CAPACITANCE,
     val alarmDialog: AlarmDialogState? = null,
+    val chartWindowMillis: Long = DEFAULT_CHART_WINDOW_MILLIS,
+    val isRecording: Boolean = false,
+    val exportDialog: ExportDialogState? = null,
 )
 
 /**
@@ -57,6 +60,10 @@ class BleManager(context: Context) {
     private val alarmTracker = CapacitanceAlarmTracker()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val scannedDevices = LinkedHashMap<String, ScannedDevice>()
+
+    private val recordingLock = Any()
+    private val recordingSamples = mutableListOf<CapacitanceSample>()
+    private var recordingStartMillis = 0L
 
     private var scanner: BluetoothLeScanner? = null
     private var gatt: BluetoothGatt? = null
@@ -105,6 +112,9 @@ class BleManager(context: Context) {
                         this@BleManager.gatt = null
                     }
                     lineBuffer.reset()
+                    if (_state.value.isRecording) {
+                        finalizeRecording()
+                    }
                     val current = _state.value
                     val reason = current.error
                         ?: if (hasReachedConnected) "连接已断开"
@@ -156,6 +166,7 @@ class BleManager(context: Context) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 lineBuffer.reset()
                 alarmTracker.reset()
+                synchronized(recordingLock) { recordingSamples.clear() }
                 _state.update {
                     it.copy(
                         connectionState = ConnectionState.CONNECTED_WAITING,
@@ -163,6 +174,8 @@ class BleManager(context: Context) {
                         receivedLines = emptyList(),
                         capacitanceSamples = emptyList(),
                         alarmDialog = null,
+                        isRecording = false,
+                        exportDialog = null,
                     )
                 }
             } else {
@@ -187,16 +200,21 @@ class BleManager(context: Context) {
                 shouldShowAlarm = shouldShowAlarm || transition.shouldShowDialog
                 activeAlarmChannels = transition.activeChannels
             }
+            val newSamples = readings.map { reading ->
+                CapacitanceSample(
+                    channel = reading.channel,
+                    valuePf = reading.valuePf,
+                    receivedAtMillis = receivedAtMillis,
+                )
+            }
+            if (_state.value.isRecording) {
+                synchronized(recordingLock) { recordingSamples.addAll(newSamples) }
+            }
             _state.update { current ->
                 val samples = trimSamplesToWindow(
-                    current.capacitanceSamples + readings.map { reading ->
-                        CapacitanceSample(
-                            channel = reading.channel,
-                            valuePf = reading.valuePf,
-                            receivedAtMillis = receivedAtMillis,
-                        )
-                    },
+                    current.capacitanceSamples + newSamples,
                     latestTimestampMillis = receivedAtMillis,
+                    windowMillis = current.chartWindowMillis,
                 )
                 val alarmDialog = when {
                     shouldShowAlarm -> AlarmDialogState(
@@ -294,6 +312,40 @@ class BleManager(context: Context) {
 
     fun dismissAlarm() {
         _state.update { it.copy(alarmDialog = null) }
+    }
+
+    /** 开始录制：清空上次录制缓冲，仅本次连接的后续数据会被记录。 */
+    fun startRecording() {
+        synchronized(recordingLock) { recordingSamples.clear() }
+        recordingStartMillis = System.currentTimeMillis()
+        _state.update { it.copy(isRecording = true, exportDialog = null) }
+    }
+
+    /** 停止录制：把缓冲快照放入导出弹窗状态。 */
+    fun stopRecording() {
+        finalizeRecording()
+    }
+
+    fun dismissExportDialog() {
+        _state.update { it.copy(exportDialog = null) }
+    }
+
+    fun setChartWindowMillis(millis: Long) {
+        _state.update { it.copy(chartWindowMillis = millis.coerceIn(MIN_CHART_WINDOW_MILLIS, MAX_CHART_WINDOW_MILLIS)) }
+    }
+
+    private fun finalizeRecording() {
+        val snapshot = synchronized(recordingLock) { recordingSamples.toList() }
+        _state.update {
+            it.copy(
+                isRecording = false,
+                exportDialog = ExportDialogState(
+                    samples = snapshot,
+                    startedAtMillis = recordingStartMillis,
+                    endedAtMillis = System.currentTimeMillis(),
+                ),
+            )
+        }
     }
 
     private fun disconnectWithError(message: String) {

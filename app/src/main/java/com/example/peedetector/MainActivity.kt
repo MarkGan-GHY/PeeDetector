@@ -17,6 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import com.example.peedetector.ble.BleManager
+import com.example.peedetector.export.CsvExporter
 import com.example.peedetector.ui.BleScreen
 import com.example.peedetector.ui.PermissionScreen
 import com.example.peedetector.ui.theme.PeeDetectorTheme
@@ -55,6 +56,22 @@ private fun BleApp(bleManager: BleManager) {
         hasPermission = result.values.all { it }
     }
 
+    var pendingCsv by remember { mutableStateOf<String?>(null) }
+
+    val saveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/csv"),
+    ) { uri ->
+        val csv = pendingCsv
+        pendingCsv = null
+        if (uri != null && csv != null) {
+            CsvExporter.writeToUri(context, uri, csv)
+        }
+    }
+
+    val shareLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { }
+
     if (!hasPermission) {
         PermissionScreen(
             onRequestPermission = {
@@ -69,6 +86,17 @@ private fun BleApp(bleManager: BleManager) {
             onStopScan = { bleManager.stopScan() },
             onDeviceClick = { bleManager.connect(it) },
             onDismissAlarm = { bleManager.dismissAlarm() },
+            onStartRecording = { bleManager.startRecording() },
+            onStopRecording = { bleManager.stopRecording() },
+            onChartWindowChange = { bleManager.setChartWindowMillis(it) },
+            onDismissExport = { bleManager.dismissExportDialog() },
+            onSaveCsv = { csv ->
+                pendingCsv = csv
+                saveLauncher.launch(CsvExporter.exportFileName())
+            },
+            onShareCsv = { csv ->
+                shareLauncher.launch(CsvExporter.buildShareChooser(context, csv))
+            },
         )
     }
 }

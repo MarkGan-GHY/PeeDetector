@@ -33,6 +33,13 @@ data class AlarmDialogState(
     val triggeredAtMillis: Long,
 )
 
+/** 一次录制结束后的导出数据，用于弹出保存/转发选择框。 */
+data class ExportDialogState(
+    val samples: List<CapacitanceSample>,
+    val startedAtMillis: Long,
+    val endedAtMillis: Long,
+)
+
 data class AlarmTransition(
     val shouldShowDialog: Boolean,
     val activeChannels: List<ChannelAlarm>,
@@ -108,3 +115,8 @@ fun trimSamplesToWindow(
 }
 
 const val SIXTY_SECONDS_MILLIS: Long = 60_000L
+
+/** 图表横轴时间窗口的默认值、最小值与最大值（毫秒）。 */
+const val DEFAULT_CHART_WINDOW_MILLIS: Long = 60_000L
+const val MIN_CHART_WINDOW_MILLIS: Long = 60_000L
+const val MAX_CHART_WINDOW_MILLIS: Long = 600_000L
